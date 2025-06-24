@@ -1,60 +1,175 @@
-// main.ts
-import { getVideoUrl } from "./douyin.ts";
-
-// 限流：IP => [时间戳, 时间戳, ...]
-const rateLimit = new Map<string, number[]>();
-
-Deno.serve(async (req) => {
-  const url = new URL(req.url);
-  const path = url.pathname;
-
-  const headers = new Headers({
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
-  });
-
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers });
-  }
-
-  // ✅ 首页 index.html
-  if (path === "/" && req.method === "GET" && !url.searchParams.has("url")) {
-    try {
-      const html = await Deno.readTextFile("./index.html");
-      headers.set("Content-Type", "text/html; charset=utf-8");
-      return new Response(html, { headers });
-    } catch {
-      return new Response("页面加载失败", { status: 500, headers });
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>抖音视频无水印解析</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #f5f5f5;
+      margin: 0;
+      padding: 1rem;
     }
-  }
-
-  // ✅ 解析接口：/?url=xxx
-  if (path === "/" && url.searchParams.has("url")) {
-    const inputUrl = url.searchParams.get("url")!;
-    const ip = req.headers.get("X-Forwarded-For") || "unknown";
-    const now = Date.now();
-    const oneDay = 24 * 60 * 60 * 1000;
-
-    let timestamps = rateLimit.get(ip) || [];
-    timestamps = timestamps.filter((t) => now - t < oneDay); // 清除过期
-    if (timestamps.length >= 5) {
-      return new Response(JSON.stringify({ error: "游客每天最多解析 5 次，请明天再试" }), {
-        status: 429,
-        headers,
-      });
+    .container {
+      max-width: 600px;
+      margin: auto;
+      background-color: #fff;
+      padding: 1.5rem;
+      border-radius: 12px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.05);
     }
+    h1 {
+      text-align: center;
+      font-size: 1.4rem;
+      margin-bottom: 1.2rem;
+    }
+    .input-group {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+      flex-wrap: wrap;
+    }
+    input {
+      flex: 1;
+      padding: 0.6rem;
+      font-size: 1rem;
+      border-radius: 8px;
+      border: 1px solid #ccc;
+    }
+    button {
+      padding: 0.6rem 1.2rem;
+      font-size: 1rem;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      background-color: #007bff;
+      color: white;
+      flex-shrink: 0;
+    }
+    button:disabled {
+      background-color: #ccc;
+      cursor: not-allowed;
+    }
+    .status {
+      margin-top: 0.8rem;
+      font-size: 0.95rem;
+      color: #555;
+    }
+    .progress-bar {
+      width: 100%;
+      height: 6px;
+      background-color: #eee;
+      border-radius: 5px;
+      overflow: hidden;
+      margin-top: 0.5rem;
+    }
+    .progress-bar-inner {
+      height: 100%;
+      width: 0%;
+      background-color: #007bff;
+      animation: loading 2s infinite linear;
+    }
+    @keyframes loading {
+      0% { width: 0%; }
+      50% { width: 80%; }
+      100% { width: 0%; }
+    }
+    video {
+      max-width: 100%;
+      margin-top: 1rem;
+      border-radius: 12px;
+      display: none;
+    }
+    #downloadBtn {
+      margin-top: 1rem;
+      width: 100%;
+      display: none;
+      background-color: #28a745;
+    }
+  </style>
+</head>
+<body>
 
-    timestamps.push(now);
-    rateLimit.set(ip, timestamps);
+<div class="container">
+  <h1>抖音视频无水印解析</h1>
+
+  <div class="input-group">
+    <input type="text" id="videoUrl" placeholder="粘贴抖音分享文字或短链接..." />
+    <button id="parseBtn">解析</button>
+  </div>
+
+  <div class="status" id="statusText">等待输入链接...</div>
+  <div class="progress-bar" id="progressBar" style="display: none;">
+    <div class="progress-bar-inner"></div>
+  </div>
+
+  <video id="videoPlayer" controls></video>
+  <button id="downloadBtn" disabled>下载无水印视频</button>
+</div>
+
+<script>
+  const apiBase = 'https://dou10yinvd-22.deno.dev'; // 替换为你后端接口
+
+  const parseBtn = document.getElementById('parseBtn');
+  const input = document.getElementById('videoUrl');
+  const statusText = document.getElementById('statusText');
+  const progressBar = document.getElementById('progressBar');
+  const videoPlayer = document.getElementById('videoPlayer');
+  const downloadBtn = document.getElementById('downloadBtn');
+
+  parseBtn.addEventListener('click', async () => {
+    const raw = input.value.trim();
+    const match = raw.match(/https:\/\/v\.douyin\.com\/[a-zA-Z0-9]+\/?/);
+    if (!match) {
+      statusText.textContent = '❌ 无法从文本中提取抖音短链接，请检查输入';
+      return;
+    }
+    const url = match[0];
+
+    statusText.textContent = '⏳ 正在解析，请稍候...';
+    progressBar.style.display = 'block';
+    downloadBtn.style.display = 'inline-block';
+    downloadBtn.disabled = true;
+    videoPlayer.style.display = 'none';
+    videoPlayer.src = '';
+    downloadBtn.onclick = null;
 
     try {
-      const data = await getVideoUrl(inputUrl);
-      return new Response(JSON.stringify(data), { headers });
+      const res = await fetch(`${apiBase}/?url=${encodeURIComponent(url)}`);
+      if (!res.ok) throw new Error(`请求失败，状态码：${res.status}`);
+      let rawText = await res.text();
+      rawText = rawText.trim();
+      // 去掉可能的双引号
+      if ((rawText.startsWith('"') && rawText.endsWith('"')) || (rawText.startsWith("'") && rawText.endsWith("'"))) {
+        rawText = rawText.slice(1, -1);
+      }
+      if (!rawText.startsWith('http')) throw new Error('返回的视频链接格式不正确');
+
+      videoPlayer.src = rawText;
+      videoPlayer.style.display = 'block';
+
+      downloadBtn.disabled = false;
+      downloadBtn.onclick = () => {
+        const downloadUrl = `${apiBase}/download?video=${encodeURIComponent(rawText)}`;
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = 'douyin-video.mp4';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      };
+
+      statusText.textContent = '✅ 视频解析成功！可以播放或下载。';
     } catch (err) {
-      return new Response(JSON.stringify({ error: err.message }), { status: 500, headers });
+      console.error(err);
+      statusText.textContent = '❌ 解析出错：' + err.message;
+      downloadBtn.disabled = true;
+    } finally {
+      progressBar.style.display = 'none';
     }
-  }
+  });
+</script>
 
-  return new Response("404 Not Found", { status: 404, headers });
-});
+</body>
+</html>
