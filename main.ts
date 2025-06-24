@@ -1,4 +1,5 @@
-import { serve } from "https://deno.land/std/http/server.ts";
+// main.ts
+import { serve } from "https://deno.land/std@0.188.0/http/server.ts";
 import { handleAuthRoutes, isAuthorized } from "./users.ts";
 import { getVideoUrl } from "./douyin.ts";
 
@@ -30,10 +31,10 @@ serve(async (req) => {
     const token = authHeader.replace("Bearer ", "");
     const ip = req.headers.get("X-Forwarded-For") || req.conn.remoteAddr.hostname || "unknown";
 
-    const user = isAuthorized(token);
+    const user = await isAuthorized(token);
 
     if (!user) {
-      // 游客限流：一天最多3次
+      // 游客限流一天最多3次
       const now = Date.now();
       const oneDay = 24 * 60 * 60 * 1000;
       let timestamps = rateLimit.get(ip) || [];
