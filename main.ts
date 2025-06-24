@@ -1,4 +1,3 @@
-// main.ts
 import { serve } from "https://deno.land/std@0.188.0/http/server.ts";
 import { handleAuthRoutes, isAuthorized } from "./users.ts";
 import { getVideoUrl } from "./douyin.ts";
@@ -30,7 +29,7 @@ serve(async (req) => {
 
     const authHeader = req.headers.get("Authorization") || "";
     const token = authHeader.replace("Bearer ", "");
-    const ip = req.headers.get("X-Forwarded-For") || "unknown";
+    const ip = req.headers.get("X-Forwarded-For") || req.conn.remoteAddr.hostname || "unknown";
 
     const authInfo = isAuthorized(token);
     if (!authInfo) {
