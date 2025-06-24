@@ -1,61 +1,55 @@
+// main.ts
+import { serve } from "https://deno.land/std@0.188.0/http/server.ts";
+import { handleAuthRoutes, isAuthorized } from "./users.ts";
 import { getVideoUrl } from "./douyin.ts";
 
-Deno.serve(async (req) => {
-  const url = new URL(req.url);
-  const pathname = url.pathname;
+const rateLimit = new Map<string, number>(); // IP => timestamp
 
+serve(async (req) => {
+  const url = new URL(req.url);
+  const path = url.pathname;
   const headers = new Headers();
   headers.set("Access-Control-Allow-Origin", "*");
-  headers.set("Access-Control-Allow-Methods", "GET, OPTIONS");
-  headers.set("Access-Control-Allow-Headers", "Content-Type");
+  headers.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
 
   if (req.method === "OPTIONS") {
     return new Response(null, { headers });
   }
 
-  // 👉 下载中转接口 /download?video=https://...
-  if (pathname === "/download") {
-    const videoUrl = url.searchParams.get("video");
+  if (path.startsWith("/auth")) {
+    return await handleAuthRoutes(req, headers);
+  }
+
+  // 仅处理 /api?url=xxx
+  if (path === "/api" && req.method === "GET") {
+    const videoUrl = url.searchParams.get("url");
     if (!videoUrl) {
-      return new Response("缺少 video 参数", { status: 400, headers });
+      return new Response(JSON.stringify({ error: "缺少 url 参数" }), { status: 400, headers });
+    }
+
+    const authHeader = req.headers.get("Authorization") || "";
+    const token = authHeader.replace("Bearer ", "");
+    const ip = req.headers.get("X-Forwarded-For") || "unknown";
+
+    const authInfo = isAuthorized(token);
+    if (!authInfo) {
+      const last = rateLimit.get(ip) || 0;
+      const now = Date.now();
+      const oneDay = 24 * 60 * 60 * 1000;
+      if (now - last < oneDay) {
+        return new Response(JSON.stringify({ error: "游客每天仅可解析一次，请注册或明日再试" }), { status: 429, headers });
+      }
+      rateLimit.set(ip, now);
     }
 
     try {
-      const res = await fetch(videoUrl);
-      const buffer = await res.arrayBuffer();
-
-      return new Response(buffer, {
-        status: 200,
-        headers: {
-          ...headers,
-          "Content-Type": "video/mp4",
-          "Content-Disposition": 'attachment; filename="douyin-video.mp4"',
-        },
-      });
+      const data = await getVideoUrl(videoUrl);
+      return new Response(JSON.stringify(data), { headers });
     } catch (err) {
-      return new Response("下载失败：" + err.message, { status: 500, headers });
+      return new Response(JSON.stringify({ error: err.message }), { status: 500, headers });
     }
   }
 
-  // 👉 抖音解析接口 /?url=https://v.douyin.com/xxxxx/
-  if (url.searchParams.has("url")) {
-    const inputUrl = url.searchParams.get("url");
-    try {
-      const data = await getVideoUrl(inputUrl!);
-      return new Response(JSON.stringify(data), {
-        status: 200,
-        headers,
-      });
-    } catch (error) {
-      return new Response(JSON.stringify({ error: error.message }), {
-        status: 500,
-        headers,
-      });
-    }
-  }
-
-  return new Response("请提供 url 参数，或使用 /download?video=...", {
-    status: 400,
-    headers,
-  });
+  return new Response("404 Not Found", { status: 404, headers });
 });
