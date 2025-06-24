@@ -2,9 +2,7 @@ import { serve } from "https://deno.land/std@0.188.0/http/server.ts";
 import { handleAuthRoutes, isAuthorized } from "./users.ts";
 import { getVideoUrl } from "./douyin.ts";
 
-const rateLimit = new Map<string, number[]>();
-
-const indexHtml = await Deno.readTextFile("./index.html");
+const rateLimit = new Map<string, number[]>(); // IP => 时间戳数组
 
 serve(async (req) => {
   const url = new URL(req.url);
@@ -30,19 +28,22 @@ serve(async (req) => {
 
     const authHeader = req.headers.get("Authorization") || "";
     const token = authHeader.replace("Bearer ", "");
-    const ip = req.headers.get("X-Forwarded-For") || req.conn.remoteAddr.hostname || "unknown";
+    const ip = req.headers.get("X-Forwarded-For") || (req.conn.remoteAddr as Deno.NetAddr)?.hostname || "unknown";
 
     const user = isAuthorized(token);
 
     if (!user) {
+      // 游客一天限3次
       const now = Date.now();
       const oneDay = 24 * 60 * 60 * 1000;
+
       let timestamps = rateLimit.get(ip) || [];
       timestamps = timestamps.filter(t => now - t < oneDay);
 
       if (timestamps.length >= 3) {
         return new Response(JSON.stringify({ error: "游客每天最多解析3次，请注册或明日再试" }), { status: 429, headers });
       }
+
       timestamps.push(now);
       rateLimit.set(ip, timestamps);
     }
@@ -53,11 +54,6 @@ serve(async (req) => {
     } catch (err) {
       return new Response(JSON.stringify({ error: err.message }), { status: 500, headers });
     }
-  }
-
-  if (path === "/" || path === "/index.html") {
-    headers.set("Content-Type", "text/html; charset=utf-8");
-    return new Response(indexHtml, { headers });
   }
 
   return new Response("404 Not Found", { status: 404, headers });
