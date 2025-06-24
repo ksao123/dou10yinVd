@@ -1,149 +1,142 @@
-<!DOCTYPE html> 
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>抖音视频无水印解析（带鉴权）</title>
-<style>
-  body { font-family: Arial, sans-serif; background: #f9f9f9; margin:0; padding:1rem; }
-  .container { max-width: 480px; margin: auto; background: #fff; padding:1rem; border-radius:8px; box-shadow: 0 0 8px #ccc; }
-  h2 { text-align: center; }
-  input, button { width: 100%; padding: 0.6rem; margin: 0.4rem 0; font-size: 1rem; border-radius: 6px; border: 1px solid #ccc; }
-  button { cursor: pointer; background: #007bff; color: white; border: none; }
-  button:disabled { background: #aaa; cursor: not-allowed; }
-  .status { margin: 0.5rem 0; font-size: 0.9rem; color: #555; }
-  video { width: 100%; margin-top: 1rem; border-radius: 8px; display: none; }
-  #downloadBtn { background: #28a745; margin-top: 0.5rem; display: none; }
-</style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>抖音视频无水印解析</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #f5f5f5;
+      margin: 0;
+      padding: 1rem;
+    }
+    .container {
+      max-width: 600px;
+      margin: auto;
+      background-color: #fff;
+      padding: 1.5rem;
+      border-radius: 12px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.05);
+    }
+    h1 {
+      text-align: center;
+      font-size: 1.4rem;
+      margin-bottom: 1.2rem;
+    }
+    .input-group {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+      flex-wrap: wrap;
+    }
+    input {
+      flex: 1;
+      padding: 0.6rem;
+      font-size: 1rem;
+      border-radius: 8px;
+      border: 1px solid #ccc;
+    }
+    button {
+      padding: 0.6rem 1.2rem;
+      font-size: 1rem;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      background-color: #007bff;
+      color: white;
+    }
+    button:disabled {
+      background-color: #ccc;
+      cursor: not-allowed;
+    }
+    .status {
+      margin-top: 0.8rem;
+      font-size: 0.95rem;
+      color: #555;
+    }
+    .progress-bar {
+      width: 100%;
+      height: 6px;
+      background-color: #eee;
+      border-radius: 5px;
+      overflow: hidden;
+      margin-top: 0.5rem;
+    }
+    .progress-bar-inner {
+      height: 100%;
+      width: 0%;
+      background-color: #007bff;
+      animation: loading 2s infinite linear;
+    }
+    @keyframes loading {
+      0% { width: 0%; }
+      50% { width: 80%; }
+      100% { width: 0%; }
+    }
+    video {
+      max-width: 100%;
+      margin-top: 1rem;
+      border-radius: 12px;
+      display: none;
+    }
+    #downloadBtn {
+      margin-top: 1rem;
+      width: 100%;
+      display: none;
+      background-color: #28a745;
+    }
+  </style>
 </head>
 <body>
 
 <div class="container">
-  <h2>抖音视频无水印解析</h2>
+  <h1>抖音视频无水印解析</h1>
 
-  <div id="authSection">
-    <input type="text" id="username" placeholder="用户名 (≥6位)" />
-    <input type="password" id="password" placeholder="密码 (≥6位)" />
-    <input type="text" id="code" placeholder="注册码 (可选)" />
-    <button id="registerBtn">注册</button>
-    <button id="loginBtn">登录</button>
-    <div class="status" id="authStatus"></div>
+  <div class="input-group">
+    <input type="text" id="videoUrl" placeholder="粘贴抖音分享文字或短链接..." />
+    <button id="parseBtn">解析</button>
   </div>
 
-  <hr/>
-
-  <input type="text" id="videoInput" placeholder="粘贴抖音分享文字或短链接..." />
-  <button id="parseBtn" disabled>解析视频</button>
-  <div class="status" id="parseStatus">请先登录或注册</div>
+  <div class="status" id="statusText">等待输入链接...</div>
+  <div class="progress-bar" id="progressBar" style="display: none;">
+    <div class="progress-bar-inner"></div>
+  </div>
 
   <video id="videoPlayer" controls></video>
-  <button id="downloadBtn">下载无水印视频</button>
+  <button id="downloadBtn" disabled>下载无水印视频</button>
 </div>
 
 <script>
-  const apiBase = 'https://dou10yinvd-22.deno.dev'; // 替换为你的后端地址
+  const apiBase = 'https://ksao123-douyinvd-22.deno.dev'; // 替换成你的后端接口地址
 
-  let token = '';
-
-  const usernameInput = document.getElementById('username');
-  const passwordInput = document.getElementById('password');
-  const codeInput = document.getElementById('code');
-  const registerBtn = document.getElementById('registerBtn');
-  const loginBtn = document.getElementById('loginBtn');
-  const authStatus = document.getElementById('authStatus');
-
-  const videoInput = document.getElementById('videoInput');
   const parseBtn = document.getElementById('parseBtn');
-  const parseStatus = document.getElementById('parseStatus');
-
+  const input = document.getElementById('videoUrl');
+  const statusText = document.getElementById('statusText');
+  const progressBar = document.getElementById('progressBar');
   const videoPlayer = document.getElementById('videoPlayer');
   const downloadBtn = document.getElementById('downloadBtn');
 
-  // 注册
-  registerBtn.onclick = async () => {
-    const username = usernameInput.value.trim();
-    const password = passwordInput.value.trim();
-    const code = codeInput.value.trim();
-
-    if (username.length < 6 || password.length < 6) {
-      authStatus.textContent = '用户名和密码必须不少于6位';
-      return;
-    }
-
-    authStatus.textContent = '注册中...';
-
-    try {
-      const res = await fetch(apiBase + '/auth/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password, code }),
-      });
-      const data = await res.json();
-      if (data.error) {
-        authStatus.textContent = '注册失败：' + data.error;
-      } else {
-        authStatus.textContent = '注册成功！请登录';
-      }
-    } catch (err) {
-      authStatus.textContent = '注册出错：' + err.message;
-    }
-  };
-
-  // 登录
-  loginBtn.onclick = async () => {
-    const username = usernameInput.value.trim();
-    const password = passwordInput.value.trim();
-
-    if (username.length < 6 || password.length < 6) {
-      authStatus.textContent = '用户名和密码必须不少于6位';
-      return;
-    }
-
-    authStatus.textContent = '登录中...';
-
-    try {
-      const res = await fetch(apiBase + '/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
-      });
-      const data = await res.json();
-      if (data.error) {
-        authStatus.textContent = '登录失败：' + data.error;
-        token = '';
-        parseBtn.disabled = true;
-      } else {
-        authStatus.textContent = '登录成功！' + (data.isAuthorized ? '【授权用户】' : '【普通用户】');
-        token = data.token;
-        parseBtn.disabled = false;
-      }
-    } catch (err) {
-      authStatus.textContent = '登录出错：' + err.message;
-      token = '';
-      parseBtn.disabled = true;
-    }
-  };
-
-  // 解析视频
-  parseBtn.onclick = async () => {
-    const raw = videoInput.value.trim();
-    const match = raw.match(/https?:\/\/v\.douyin\.com\/[a-zA-Z0-9]+\/?/);
+  parseBtn.addEventListener('click', async () => {
+    const raw = input.value.trim();
+    const match = raw.match(/https:\/\/v\.douyin\.com\/[a-zA-Z0-9]+\/?/);
     if (!match) {
-      parseStatus.textContent = '❌ 无法从文本中提取抖音链接，请检查输入';
-      videoPlayer.style.display = 'none';
-      downloadBtn.style.display = 'none';
+      statusText.textContent = '❌ 无法从文本中提取抖音链接，请检查输入';
       return;
     }
 
     const url = match[0];
-    parseStatus.textContent = '⏳ 正在解析...';
+
+    // 状态与按钮初始化
+    statusText.textContent = '⏳ 正在解析，请稍候...';
+    progressBar.style.display = 'block';
+    downloadBtn.style.display = 'inline-block';
+    downloadBtn.disabled = true;
     videoPlayer.style.display = 'none';
-    downloadBtn.style.display = 'none';
+    videoPlayer.src = '';
 
     try {
-      const res = await fetch(`${apiBase}/api?url=${encodeURIComponent(url)}`, {
-        headers: { Authorization: 'Bearer ' + token },
-      });
+      const res = await fetch(`${apiBase}/?url=${encodeURIComponent(url)}`);
       if (!res.ok) throw new Error(`请求失败，状态码：${res.status}`);
       const data = await res.json();
 
@@ -160,7 +153,7 @@
         videoPlayer.src = videoLink;
         videoPlayer.style.display = 'block';
 
-        downloadBtn.style.display = 'block';
+        downloadBtn.disabled = false;
         downloadBtn.onclick = () => {
           const a = document.createElement('a');
           a.href = videoLink;
@@ -168,17 +161,19 @@
           a.click();
         };
 
-        parseStatus.textContent = '✅ 解析成功，视频已加载';
+        statusText.textContent = '✅ 视频解析成功！你可以播放或下载。';
       } else {
-        parseStatus.textContent = '❌ 解析失败，未获取到视频链接';
-        downloadBtn.style.display = 'none';
+        statusText.textContent = '❌ 解析失败，未获取到视频链接';
+        downloadBtn.disabled = true;
       }
     } catch (err) {
-      parseStatus.textContent = '❌ 解析出错：' + err.message;
-      downloadBtn.style.display = 'none';
-      videoPlayer.style.display = 'none';
+      console.error(err);
+      statusText.textContent = '❌ 解析出错：' + err.message;
+      downloadBtn.disabled = true;
+    } finally {
+      progressBar.style.display = 'none';
     }
-  };
+  });
 </script>
 
 </body>
