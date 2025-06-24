@@ -1,57 +1,81 @@
 // users.ts
-import { createHash } from "https://deno.land/std@0.188.0/hash/mod.ts";
+// 这是简化版的注册和鉴权逻辑，实际可用数据库或KV存储替换
 
-const users = new Map<string, { password: string; vip: boolean }>();
-const validCodes = new Set(["VIP123", "ABC999"]); // 注册码白名单，可自行添加
-const tokenStore = new Map<string, { username: string; vip: boolean; expires: number }>();
-
-function hash(input: string) {
-  return createHash("sha256").update(input).toString();
+interface User {
+  username: string;
+  passwordHash: string;
+  token: string;
+  expireAt: number;  // 时间戳，到期时间
 }
 
-function generateToken(username: string): string {
-  const raw = username + Date.now() + Math.random();
-  return hash(raw).slice(0, 32);
+const users = new Map<string, User>();  // token => User
+
+import { createHash } from "https://deno.land/std@0.188.0/hash/sha256.ts";
+
+function hashPwd(pwd: string) {
+  const hash = createHash("sha256");
+  hash.update(pwd);
+  return hash.toString();
 }
 
-export function isAuthorized(token: string) {
-  const record = tokenStore.get(token);
-  if (!record) return null;
-  if (Date.now() > record.expires) {
-    tokenStore.delete(token);
-    return null;
-  }
-  return record;
+function generateToken(username: string) {
+  return crypto.randomUUID();
 }
 
-export async function handleAuthRoutes(req: Request, headers: Headers): Promise<Response> {
+export async function handleAuthRoutes(req: Request, headers: Headers) {
   const url = new URL(req.url);
   const path = url.pathname;
-  const body = await req.json().catch(() => ({}));
 
-  if (path === "/auth/register") {
-    const { username, password, code } = body;
-    if (!username || username.length < 6 || !password || password.length < 6) {
-      return new Response(JSON.stringify({ error: "用户名和密码必须不少于6位" }), { status: 400, headers });
+  if (req.method === "POST" && path === "/auth/register") {
+    const body = await req.json();
+    const username: string = body.username;
+    const password: string = body.password;
+    const code: string = body.code || "";
+
+    if (!username || username.length < 3) {
+      return new Response(JSON.stringify({ error: "用户名至少3个字符" }), { status: 400, headers });
     }
-    if (users.has(username)) {
-      return new Response(JSON.stringify({ error: "用户名已存在" }), { status: 400, headers });
+    if (!password || password.length < 6) {
+      return new Response(JSON.stringify({ error: "密码至少6个字符" }), { status: 400, headers });
     }
-    const vip = code && validCodes.has(code);
-    users.set(username, { password: hash(password), vip });
-    return new Response(JSON.stringify({ success: true, vip }), { headers });
+
+    // 简单校验注册码（可替换成真实校验）
+    const authorized = code === "YOUR_VALID_CODE_HERE" || code === "";
+
+    const pwdHash = hashPwd(password);
+    const token = generateToken(username);
+    const expireAt = Date.now() + (authorized ? 365 * 24 * 3600 * 1000 : 30 * 24 * 3600 * 1000); // 授权1年，无授权30天
+
+    users.set(token, { username, passwordHash: pwdHash, token, expireAt });
+
+    return new Response(JSON.stringify({ token, authorized }), { headers });
   }
 
-  if (path === "/auth/login") {
-    const { username, password } = body;
-    const user = users.get(username);
-    if (!user || user.password !== hash(password)) {
-      return new Response(JSON.stringify({ error: "用户名或密码错误" }), { status: 401, headers });
+  if (req.method === "POST" && path === "/auth/login") {
+    const body = await req.json();
+    const username: string = body.username;
+    const password: string = body.password;
+
+    for (const user of users.values()) {
+      if (user.username === username && user.passwordHash === hashPwd(password)) {
+        // 更新token过期时间
+        user.expireAt = Date.now() + 365 * 24 * 3600 * 1000;
+        return new Response(JSON.stringify({ token: user.token }), { headers });
+      }
     }
-    const token = generateToken(username);
-    tokenStore.set(token, { username, vip: user.vip, expires: Date.now() + 1000 * 60 * 60 * 24 * 30 }); // 30天有效期
-    return new Response(JSON.stringify({ token, vip: user.vip }), { headers });
+    return new Response(JSON.stringify({ error: "用户名或密码错误" }), { status: 401, headers });
   }
 
   return new Response("404 Not Found", { status: 404, headers });
+}
+
+export function isAuthorized(token: string) {
+  if (!token) return null;
+  const user = users.get(token);
+  if (!user) return null;
+  if (user.expireAt < Date.now()) {
+    users.delete(token);
+    return null;
+  }
+  return user;
 }
