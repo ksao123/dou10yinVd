@@ -94,8 +94,8 @@
     const username = usernameInput.value.trim();
     const password = passwordInput.value.trim();
 
-    if (username.length < 63|| password.length < 6) {
-      authStatus.textContent = '用户名至少3位，密码至少6位';
+    if (username.length < 6 || password.length < 6) {
+      authStatus.textContent = '用户名和密码必须不少于6位';
       return;
     }
 
@@ -113,7 +113,7 @@
         token = '';
         parseBtn.disabled = true;
       } else {
-        authStatus.textContent = '登录成功！' + (data.vip ? '【VIP用户】' : '【普通用户】');
+        authStatus.textContent = '登录成功！' + (data.isAuthorized ? '【授权用户】' : '【普通用户】');
         token = data.token;
         parseBtn.disabled = false;
       }
@@ -127,7 +127,7 @@
   // 解析视频
   parseBtn.onclick = async () => {
     const raw = videoInput.value.trim();
-    const match = raw.match(/https?:\\/\\/v\\.douyin\\.com\\/[a-zA-Z0-9]+\\/?/);
+    const match = raw.match(/https?:\/\/v\.douyin\.com\/[a-zA-Z0-9]+\/?/);
     if (!match) {
       parseStatus.textContent = '❌ 无法从文本中提取抖音链接，请检查输入';
       videoPlayer.style.display = 'none';
