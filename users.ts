@@ -1,5 +1,7 @@
-import { Sha256 } from "https://deno.land/std@0.224.0/hash/sha256.ts";
+// users.ts
+import { Sha256 } from "https://deno.land/std@0.194.0/hash/sha256.ts";  // 这里版本号用0.194.0，确认有效
 
+// 下面是之前的代码，保持不变
 interface User {
   username: string;
   passwordHash: string;
@@ -21,7 +23,6 @@ export async function handleAuthRoutes(req: Request, headers: Headers) {
     try {
       const body = await req.json();
       const { username, password, code } = body;
-
       if (!username || username.length < 3) {
         return new Response(JSON.stringify({ error: "用户名至少3位" }), { status: 400, headers });
       }
@@ -33,12 +34,10 @@ export async function handleAuthRoutes(req: Request, headers: Headers) {
       const pwdHash = hashPwd(password);
 
       if (user) {
-        // 登录验证
         if (user.passwordHash !== pwdHash) {
           return new Response(JSON.stringify({ error: "密码错误" }), { status: 401, headers });
         }
       } else {
-        // 注册
         const authorized = code && code === "your-secret-code";
         user = {
           username,
@@ -52,7 +51,10 @@ export async function handleAuthRoutes(req: Request, headers: Headers) {
 
       const token = btoa(username + ":" + pwdHash);
 
-      return new Response(JSON.stringify({ token, isAuthorized: user.isAuthorized }), { status: 200, headers });
+      return new Response(JSON.stringify({ token, isAuthorized: user.isAuthorized }), {
+        status: 200,
+        headers,
+      });
     } catch {
       return new Response(JSON.stringify({ error: "请求格式错误" }), { status: 400, headers });
     }
