@@ -1,81 +1,89 @@
 // users.ts
-// 这是简化版的注册和鉴权逻辑，实际可用数据库或KV存储替换
+import { Sha256 } from "https://deno.land/std@0.188.0/hash/sha256.ts";
 
 interface User {
   username: string;
   passwordHash: string;
-  token: string;
-  expireAt: number;  // 时间戳，到期时间
+  isAuthorized: boolean;
+  expireAt?: number; // 可选，授权过期时间（时间戳）
+  lastDownloadDay?: number; // 记录未授权用户当天下载限制
 }
 
-const users = new Map<string, User>();  // token => User
-
-import { createHash } from "https://deno.land/std@0.188.0/hash/sha256.ts";
+// 简易内存用户库，生产环境请改成数据库
+const users = new Map<string, User>();
 
 function hashPwd(pwd: string) {
-  const hash = createHash("sha256");
+  const hash = new Sha256();
   hash.update(pwd);
   return hash.toString();
 }
 
-function generateToken(username: string) {
-  return crypto.randomUUID();
-}
-
 export async function handleAuthRoutes(req: Request, headers: Headers) {
-  const url = new URL(req.url);
-  const path = url.pathname;
-
-  if (req.method === "POST" && path === "/auth/register") {
-    const body = await req.json();
-    const username: string = body.username;
-    const password: string = body.password;
-    const code: string = body.code || "";
-
-    if (!username || username.length < 3) {
-      return new Response(JSON.stringify({ error: "用户名至少3个字符" }), { status: 400, headers });
-    }
-    if (!password || password.length < 6) {
-      return new Response(JSON.stringify({ error: "密码至少6个字符" }), { status: 400, headers });
-    }
-
-    // 简单校验注册码（可替换成真实校验）
-    const authorized = code === "YOUR_VALID_CODE_HERE" || code === "";
-
-    const pwdHash = hashPwd(password);
-    const token = generateToken(username);
-    const expireAt = Date.now() + (authorized ? 365 * 24 * 3600 * 1000 : 30 * 24 * 3600 * 1000); // 授权1年，无授权30天
-
-    users.set(token, { username, passwordHash: pwdHash, token, expireAt });
-
-    return new Response(JSON.stringify({ token, authorized }), { headers });
-  }
-
-  if (req.method === "POST" && path === "/auth/login") {
-    const body = await req.json();
-    const username: string = body.username;
-    const password: string = body.password;
-
-    for (const user of users.values()) {
-      if (user.username === username && user.passwordHash === hashPwd(password)) {
-        // 更新token过期时间
-        user.expireAt = Date.now() + 365 * 24 * 3600 * 1000;
-        return new Response(JSON.stringify({ token: user.token }), { headers });
+  if (req.method === "POST") {
+    try {
+      const body = await req.json();
+      const { username, password, code } = body;
+      if (!username || username.length < 3) {
+        return new Response(JSON.stringify({ error: "用户名至少3位" }), { status: 400, headers });
       }
+      if (!password || password.length < 6) {
+        return new Response(JSON.stringify({ error: "密码至少6位" }), { status: 400, headers });
+      }
+
+      let user = users.get(username);
+      const pwdHash = hashPwd(password);
+
+      if (user) {
+        // 登录流程，校验密码
+        if (user.passwordHash !== pwdHash) {
+          return new Response(JSON.stringify({ error: "密码错误" }), { status: 401, headers });
+        }
+      } else {
+        // 注册新用户
+        const authorized = code && code === "your-secret-code"; // 简单校验注册码
+        user = {
+          username,
+          passwordHash: pwdHash,
+          isAuthorized: !!authorized,
+          expireAt: authorized ? Date.now() + 30 * 24 * 3600 * 1000 : undefined, // 授权有效期30天示例
+          lastDownloadDay: 0,
+        };
+        users.set(username, user);
+      }
+
+      // 生成简单 Token (此处为示例，生产请用 JWT 或其他安全方案)
+      const token = btoa(username + ":" + pwdHash);
+
+      return new Response(JSON.stringify({ token, isAuthorized: user.isAuthorized }), {
+        status: 200,
+        headers,
+      });
+    } catch {
+      return new Response(JSON.stringify({ error: "请求格式错误" }), { status: 400, headers });
     }
-    return new Response(JSON.stringify({ error: "用户名或密码错误" }), { status: 401, headers });
   }
 
-  return new Response("404 Not Found", { status: 404, headers });
+  return new Response("仅支持 POST", { status: 405, headers });
 }
 
-export function isAuthorized(token: string) {
+export function isAuthorized(token: string | null): User | null {
   if (!token) return null;
-  const user = users.get(token);
-  if (!user) return null;
-  if (user.expireAt < Date.now()) {
-    users.delete(token);
+  try {
+    const decoded = atob(token);
+    const [username, pwdHash] = decoded.split(":");
+    const user = users.get(username);
+    if (!user) return null;
+    if (user.passwordHash !== pwdHash) return null;
+    if (user.isAuthorized) {
+      // 判断是否过期
+      if (user.expireAt && Date.now() > user.expireAt) {
+        user.isAuthorized = false; // 过期自动取消授权
+        return null;
+      }
+      return user;
+    }
+    return null;
+  } catch {
     return null;
   }
-  return user;
 }
