@@ -45,6 +45,7 @@
       cursor: pointer;
       background-color: #007bff;
       color: white;
+      flex-shrink: 0;
     }
     button:disabled {
       background-color: #ccc;
@@ -108,7 +109,7 @@
 </div>
 
 <script>
-  const apiBase = 'https://ksao123-douyinvd-22.deno.dev'; // 替换成你的后端接口地址
+  const apiBase = 'https://dou10yinvd-22.deno.dev'; // 替换为你后端接口
 
   const parseBtn = document.getElementById('parseBtn');
   const input = document.getElementById('videoUrl');
@@ -121,51 +122,45 @@
     const raw = input.value.trim();
     const match = raw.match(/https:\/\/v\.douyin\.com\/[a-zA-Z0-9]+\/?/);
     if (!match) {
-      statusText.textContent = '❌ 无法从文本中提取抖音链接，请检查输入';
+      statusText.textContent = '❌ 无法从文本中提取抖音短链接，请检查输入';
       return;
     }
-
     const url = match[0];
 
-    // 状态与按钮初始化
     statusText.textContent = '⏳ 正在解析，请稍候...';
     progressBar.style.display = 'block';
     downloadBtn.style.display = 'inline-block';
     downloadBtn.disabled = true;
     videoPlayer.style.display = 'none';
     videoPlayer.src = '';
+    downloadBtn.onclick = null;
 
     try {
       const res = await fetch(`${apiBase}/?url=${encodeURIComponent(url)}`);
       if (!res.ok) throw new Error(`请求失败，状态码：${res.status}`);
-      const data = await res.json();
-
-      let videoLink = null;
-      if (data.video_url) {
-        videoLink = data.video_url;
-      } else if (data.play_addr?.url_list?.[0]) {
-        videoLink = data.play_addr.url_list[0];
-      } else if (typeof data === 'string' && data.startsWith('http')) {
-        videoLink = data;
+      let rawText = await res.text();
+      rawText = rawText.trim();
+      // 去掉可能的双引号
+      if ((rawText.startsWith('"') && rawText.endsWith('"')) || (rawText.startsWith("'") && rawText.endsWith("'"))) {
+        rawText = rawText.slice(1, -1);
       }
+      if (!rawText.startsWith('http')) throw new Error('返回的视频链接格式不正确');
 
-      if (videoLink) {
-        videoPlayer.src = videoLink;
-        videoPlayer.style.display = 'block';
+      videoPlayer.src = rawText;
+      videoPlayer.style.display = 'block';
 
-        downloadBtn.disabled = false;
-        downloadBtn.onclick = () => {
-          const a = document.createElement('a');
-          a.href = videoLink;
-          a.download = 'douyin-video.mp4';
-          a.click();
-        };
+      downloadBtn.disabled = false;
+      downloadBtn.onclick = () => {
+        const downloadUrl = `${apiBase}/download?video=${encodeURIComponent(rawText)}`;
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = 'douyin-video.mp4';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      };
 
-        statusText.textContent = '✅ 视频解析成功！你可以播放或下载。';
-      } else {
-        statusText.textContent = '❌ 解析失败，未获取到视频链接';
-        downloadBtn.disabled = true;
-      }
+      statusText.textContent = '✅ 视频解析成功！可以播放或下载。';
     } catch (err) {
       console.error(err);
       statusText.textContent = '❌ 解析出错：' + err.message;
