@@ -1,0 +1,185 @@
+<!DOCTYPE html> 
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>抖音视频无水印解析（带鉴权）</title>
+<style>
+  body { font-family: Arial, sans-serif; background: #f9f9f9; margin:0; padding:1rem; }
+  .container { max-width: 480px; margin: auto; background: #fff; padding:1rem; border-radius:8px; box-shadow: 0 0 8px #ccc; }
+  h2 { text-align: center; }
+  input, button { width: 100%; padding: 0.6rem; margin: 0.4rem 0; font-size: 1rem; border-radius: 6px; border: 1px solid #ccc; }
+  button { cursor: pointer; background: #007bff; color: white; border: none; }
+  button:disabled { background: #aaa; cursor: not-allowed; }
+  .status { margin: 0.5rem 0; font-size: 0.9rem; color: #555; }
+  video { width: 100%; margin-top: 1rem; border-radius: 8px; display: none; }
+  #downloadBtn { background: #28a745; margin-top: 0.5rem; display: none; }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <h2>抖音视频无水印解析</h2>
+
+  <div id="authSection">
+    <input type="text" id="username" placeholder="用户名 (≥6位)" />
+    <input type="password" id="password" placeholder="密码 (≥6位)" />
+    <input type="text" id="code" placeholder="注册码 (可选)" />
+    <button id="registerBtn">注册</button>
+    <button id="loginBtn">登录</button>
+    <div class="status" id="authStatus"></div>
+  </div>
+
+  <hr/>
+
+  <input type="text" id="videoInput" placeholder="粘贴抖音分享文字或短链接..." />
+  <button id="parseBtn" disabled>解析视频</button>
+  <div class="status" id="parseStatus">请先登录或注册</div>
+
+  <video id="videoPlayer" controls></video>
+  <button id="downloadBtn">下载无水印视频</button>
+</div>
+
+<script>
+  const apiBase = 'https://dou10yinvd-22.deno.dev'; // 替换为你的后端地址
+
+  let token = '';
+
+  const usernameInput = document.getElementById('username');
+  const passwordInput = document.getElementById('password');
+  const codeInput = document.getElementById('code');
+  const registerBtn = document.getElementById('registerBtn');
+  const loginBtn = document.getElementById('loginBtn');
+  const authStatus = document.getElementById('authStatus');
+
+  const videoInput = document.getElementById('videoInput');
+  const parseBtn = document.getElementById('parseBtn');
+  const parseStatus = document.getElementById('parseStatus');
+
+  const videoPlayer = document.getElementById('videoPlayer');
+  const downloadBtn = document.getElementById('downloadBtn');
+
+  // 注册
+  registerBtn.onclick = async () => {
+    const username = usernameInput.value.trim();
+    const password = passwordInput.value.trim();
+    const code = codeInput.value.trim();
+
+    if (username.length < 6 || password.length < 6) {
+      authStatus.textContent = '用户名和密码必须不少于6位';
+      return;
+    }
+
+    authStatus.textContent = '注册中...';
+
+    try {
+      const res = await fetch(apiBase + '/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password, code }),
+      });
+      const data = await res.json();
+      if (data.error) {
+        authStatus.textContent = '注册失败：' + data.error;
+      } else {
+        authStatus.textContent = '注册成功！请登录';
+      }
+    } catch (err) {
+      authStatus.textContent = '注册出错：' + err.message;
+    }
+  };
+
+  // 登录
+  loginBtn.onclick = async () => {
+    const username = usernameInput.value.trim();
+    const password = passwordInput.value.trim();
+
+    if (username.length < 63|| password.length < 6) {
+      authStatus.textContent = '用户名至少3位，密码至少6位';
+      return;
+    }
+
+    authStatus.textContent = '登录中...';
+
+    try {
+      const res = await fetch(apiBase + '/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
+      const data = await res.json();
+      if (data.error) {
+        authStatus.textContent = '登录失败：' + data.error;
+        token = '';
+        parseBtn.disabled = true;
+      } else {
+        authStatus.textContent = '登录成功！' + (data.vip ? '【VIP用户】' : '【普通用户】');
+        token = data.token;
+        parseBtn.disabled = false;
+      }
+    } catch (err) {
+      authStatus.textContent = '登录出错：' + err.message;
+      token = '';
+      parseBtn.disabled = true;
+    }
+  };
+
+  // 解析视频
+  parseBtn.onclick = async () => {
+    const raw = videoInput.value.trim();
+    const match = raw.match(/https?:\\/\\/v\\.douyin\\.com\\/[a-zA-Z0-9]+\\/?/);
+    if (!match) {
+      parseStatus.textContent = '❌ 无法从文本中提取抖音链接，请检查输入';
+      videoPlayer.style.display = 'none';
+      downloadBtn.style.display = 'none';
+      return;
+    }
+
+    const url = match[0];
+    parseStatus.textContent = '⏳ 正在解析...';
+    videoPlayer.style.display = 'none';
+    downloadBtn.style.display = 'none';
+
+    try {
+      const res = await fetch(`${apiBase}/api?url=${encodeURIComponent(url)}`, {
+        headers: { Authorization: 'Bearer ' + token },
+      });
+      if (!res.ok) throw new Error(`请求失败，状态码：${res.status}`);
+      const data = await res.json();
+
+      let videoLink = null;
+      if (data.video_url) {
+        videoLink = data.video_url;
+      } else if (data.play_addr?.url_list?.[0]) {
+        videoLink = data.play_addr.url_list[0];
+      } else if (typeof data === 'string' && data.startsWith('http')) {
+        videoLink = data;
+      }
+
+      if (videoLink) {
+        videoPlayer.src = videoLink;
+        videoPlayer.style.display = 'block';
+
+        downloadBtn.style.display = 'block';
+        downloadBtn.onclick = () => {
+          const a = document.createElement('a');
+          a.href = videoLink;
+          a.download = 'douyin-video.mp4';
+          a.click();
+        };
+
+        parseStatus.textContent = '✅ 解析成功，视频已加载';
+      } else {
+        parseStatus.textContent = '❌ 解析失败，未获取到视频链接';
+        downloadBtn.style.display = 'none';
+      }
+    } catch (err) {
+      parseStatus.textContent = '❌ 解析出错：' + err.message;
+      downloadBtn.style.display = 'none';
+      videoPlayer.style.display = 'none';
+    }
+  };
+</script>
+
+</body>
+</html>
