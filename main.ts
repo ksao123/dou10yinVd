@@ -1,90 +1,56 @@
-// users.ts
-import { Sha256 } from "https://deno.land/std@0.224.0/crypto/sha256.ts";
+import { serve } from "https://deno.land/std@0.194.0/http/server.ts";
+import { handleAuthRoutes, isAuthorized } from "./users.ts";
+import { getVideoUrl } from "./douyin.ts";
 
-interface User {
-  username: string;
-  passwordHash: string;
-  isAuthorized: boolean;
-  expireAt?: number; // 授权过期时间（时间戳）
-  lastDownloadDay?: number; // 记录未授权用户当天下载限制
-}
+const rateLimit = new Map<string, number[]>(); // IP => 时间戳数组
 
-// 简易内存用户库，生产环境建议改用数据库
-const users = new Map<string, User>();
+serve(async (req) => {
+  const url = new URL(req.url);
+  const path = url.pathname;
+  const headers = new Headers();
+  headers.set("Access-Control-Allow-Origin", "*");
+  headers.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
 
-function hashPwd(pwd: string) {
-  const hash = new Sha256();
-  hash.update(pwd);
-  return hash.toString();
-}
+  if (req.method === "OPTIONS") {
+    return new Response(null, { headers });
+  }
 
-export async function handleAuthRoutes(req: Request, headers: Headers) {
-  if (req.method === "POST") {
+  if (path.startsWith("/auth")) {
+    return await handleAuthRoutes(req, headers);
+  }
+
+  if (path === "/api" && req.method === "GET") {
+    const videoUrl = url.searchParams.get("url");
+    if (!videoUrl) {
+      return new Response(JSON.stringify({ error: "缺少 url 参数" }), { status: 400, headers });
+    }
+
+    const authHeader = req.headers.get("Authorization") || "";
+    const token = authHeader.replace("Bearer ", "");
+    const ip = req.headers.get("X-Forwarded-For") || req.conn.remoteAddr.hostname || "unknown";
+
+    const user = isAuthorized(token);
+
+    if (!user) {
+      const now = Date.now();
+      const oneDay = 24 * 60 * 60 * 1000;
+      let timestamps = rateLimit.get(ip) || [];
+      timestamps = timestamps.filter(t => now - t < oneDay);
+      if (timestamps.length >= 3) {
+        return new Response(JSON.stringify({ error: "游客每天最多解析3次，请注册或明日再试" }), { status: 429, headers });
+      }
+      timestamps.push(now);
+      rateLimit.set(ip, timestamps);
+    }
+
     try {
-      const body = await req.json();
-      const { username, password, code } = body;
-
-      if (!username || username.length < 3) {
-        return new Response(JSON.stringify({ error: "用户名至少3位" }), { status: 400, headers });
-      }
-      if (!password || password.length < 6) {
-        return new Response(JSON.stringify({ error: "密码至少6位" }), { status: 400, headers });
-      }
-
-      let user = users.get(username);
-      const pwdHash = hashPwd(password);
-
-      if (user) {
-        // 登录流程，校验密码
-        if (user.passwordHash !== pwdHash) {
-          return new Response(JSON.stringify({ error: "密码错误" }), { status: 401, headers });
-        }
-      } else {
-        // 注册新用户
-        const authorized = code && code === "your-secret-code"; // 简单校验注册码
-        user = {
-          username,
-          passwordHash: pwdHash,
-          isAuthorized: !!authorized,
-          expireAt: authorized ? Date.now() + 30 * 24 * 3600 * 1000 : undefined, // 授权有效期30天示例
-          lastDownloadDay: 0,
-        };
-        users.set(username, user);
-      }
-
-      // 生成简单 Token (示例，生产建议用 JWT 或其他安全方案)
-      const token = btoa(username + ":" + pwdHash);
-
-      return new Response(JSON.stringify({ token, isAuthorized: user.isAuthorized }), {
-        status: 200,
-        headers,
-      });
-    } catch {
-      return new Response(JSON.stringify({ error: "请求格式错误" }), { status: 400, headers });
+      const data = await getVideoUrl(videoUrl);
+      return new Response(JSON.stringify(data), { headers });
+    } catch (err) {
+      return new Response(JSON.stringify({ error: err.message }), { status: 500, headers });
     }
   }
 
-  return new Response("仅支持 POST", { status: 405, headers });
-}
-
-export function isAuthorized(token: string | null): User | null {
-  if (!token) return null;
-  try {
-    const decoded = atob(token);
-    const [username, pwdHash] = decoded.split(":");
-    const user = users.get(username);
-    if (!user) return null;
-    if (user.passwordHash !== pwdHash) return null;
-    if (user.isAuthorized) {
-      // 判断是否过期
-      if (user.expireAt && Date.now() > user.expireAt) {
-        user.isAuthorized = false; // 过期自动取消授权
-        return null;
-      }
-      return user;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
+  return new Response("404 Not Found", { status: 404, headers });
+});
